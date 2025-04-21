@@ -17,6 +17,10 @@ var (
 	timeout = flag.Int("timeout", 30, "Client inactivity timeout in seconds")
 )
 
+const (
+	goodbyeMsg = "Goodbye! Closing connection...\n\n"
+)
+
 func main() {
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -35,7 +39,6 @@ func main() {
 			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
-
 		go handleClient(conn)
 	}
 }
@@ -48,7 +51,6 @@ func handleClient(conn net.Conn) {
 		log.Printf("Client disconnected: %s", clientAddr)
 	}()
 
-	// Create log file
 	logFile, err := os.Create(fmt.Sprintf("%s.log", strings.ReplaceAll(clientAddr, ":", "_")))
 	if err != nil {
 		log.Printf("Error creating log file: %v", err)
@@ -56,14 +58,12 @@ func handleClient(conn net.Conn) {
 	}
 	defer logFile.Close()
 
-	reader := bufio.NewReaderSize(conn, 1024) // Set max message size
+	reader := bufio.NewReaderSize(conn, 1024)
 	writer := bufio.NewWriter(conn)
 
 	for {
-		// Set read timeout
 		conn.SetReadDeadline(time.Now().Add(time.Duration(*timeout) * time.Second))
 
-		// Read until newline
 		message, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -78,63 +78,45 @@ func handleClient(conn net.Conn) {
 			return
 		}
 
-		// Trim and process message
 		message = strings.TrimSpace(message)
 		log.Printf("%s >> %s", clientAddr, message)
 		fmt.Fprintf(logFile, "[%s] %s\n", time.Now().Format(time.RFC3339), message)
 
-		// Process message and get response
 		response, shouldClose := processMessage(message)
 
-		// Write response
-		if _, err := writer.WriteString(response + "\n"); err != nil {
+		if _, err := writer.WriteString(response); err != nil {
 			log.Printf("%s: Write error: %v", clientAddr, err)
 			return
 		}
-		if err := writer.Flush(); err != nil {
-			log.Printf("%s: Flush error: %v", clientAddr, err)
+
+		// Critical fix: Flush before closing connection
+		if shouldClose {
+			writer.Flush()
+			time.Sleep(100 * time.Millisecond) // Ensure delivery
 			return
 		}
 
-		if shouldClose {
+		if err := writer.Flush(); err != nil {
+			log.Printf("%s: Flush error: %v", clientAddr, err)
 			return
 		}
 	}
 }
 
 func processMessage(msg string) (string, bool) {
-	msg = strings.TrimSpace(msg)
+	msg = strings.TrimSpace(strings.ToLower(msg))
 	switch {
 	case msg == "":
 		return "Say something...\n\n", false
 	case msg == "hello":
 		return "Hi there!\n\n", false
-	case msg == "bye":
-		return "Goodbye!\n\n", true
+	case msg == "bye" || strings.HasPrefix(msg, "/quit"):
+		return goodbyeMsg, true
 	case strings.HasPrefix(msg, "/time"):
 		return time.Now().Format("15:04:05") + "\n\n", false
-	case strings.HasPrefix(msg, "/quit"):
-		return "Closing connection\n\n", true
 	case strings.HasPrefix(msg, "/echo "):
 		return strings.TrimPrefix(msg, "/echo ") + "\n\n", false
 	default:
 		return msg + "\n\n", false
-	}
-}
-
-func handleCommand(cmd string) (string, bool) {
-	parts := strings.SplitN(cmd, " ", 2)
-	switch parts[0] {
-	case "/time":
-		return time.Now().Format("2006-01-02 15:04:05 MST"), false
-	case "/quit":
-		return "Closing connection", true
-	case "/echo":
-		if len(parts) > 1 {
-			return parts[1], false
-		}
-		return "Echo what?", false
-	default:
-		return "Unknown command", false
 	}
 }
