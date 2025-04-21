@@ -89,10 +89,11 @@ func handleClient(conn net.Conn) {
 			return
 		}
 
-		// Critical fix: Flush before closing connection
+		//Flush before closing connection
 		if shouldClose {
 			writer.Flush()
 			time.Sleep(100 * time.Millisecond)
+			return
 		}
 
 		if err := writer.Flush(); err != nil {
